@@ -286,19 +286,21 @@ def main() -> None:
                 return
 
         prob_no_rain = 1.0 - prob_rain
+        THRESHOLD = 0.66
 
-        st.divider()
-
-        if prob_rain >= 0.5:
+        if prob_rain >= THRESHOLD:
             st.success("🌧️ Besok Diprediksi Hujan")
         else:
             st.info("☀️ Besok Diprediksi Tidak Hujan")
+
+        st.divider()
 
         col1, col2 = st.columns(2)
         with col1:
             st.metric("☔ Probabilitas Hujan", f"{prob_rain*100:.1f}%")
         with col2:
             st.metric("☀️ Probabilitas Tidak Hujan", f"{prob_no_rain*100:.1f}%")
+            st.caption(f"Threshold optimal model LightGBM: {THRESHOLD:.2f}")
 
         st.divider()
         st.subheader("📊 Kondisi Cuaca Terakhir")
@@ -307,7 +309,8 @@ def main() -> None:
         display_df.replace(-999, np.nan, inplace=True)
         display_df.ffill(inplace=True)
         display_df.bfill(inplace=True)
-        last_raw = df_fe.iloc[-1]
+
+        last_raw = display_df.iloc[-1]
 
         col1, col2, col3 = st.columns(3)
         with col1:
