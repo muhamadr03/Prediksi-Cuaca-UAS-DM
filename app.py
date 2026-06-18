@@ -160,9 +160,17 @@ def predict_next_day(
 ) -> Tuple[float, pd.DataFrame]:
     df_fe = feature_engineering(df)
     last = df_fe.iloc[[-1]].copy()
-    X = last.reindex(columns=feature_names, fill_value=0)
+    X = last.reindex(
+    columns=scaler.feature_names_in_,
+    fill_value=0
+    )   
     # DEBUG
     st.write("Jumlah feature_names:", len(feature_names))
+    st.write("Scaler Order:")
+    st.write(list(scaler.feature_names_in_)[:10])
+
+    st.write("Input Order:")
+    st.write(list(X.columns)[:10])
 
     if hasattr(scaler, "feature_names_in_"):
         st.write("Jumlah fitur scaler:", len(scaler.feature_names_in_))
