@@ -178,12 +178,16 @@ def predict_next_day(
             "importance": model.feature_importances_
         })
 
-    st.dataframe(
-        importance_df.sort_values(
-            "importance",
-            ascending=False
-        ).head(20)
-    )
+        st.subheader("Top 20 Feature Importance")
+
+        st.dataframe(
+            importance_df.sort_values(
+                by="importance",
+                ascending=False
+            ).head(20)
+        )
+    else:
+        st.write("Model tidak memiliki feature_importances_")
 
     if hasattr(scaler, "feature_names_in_"):
         st.write("Jumlah fitur scaler:", len(scaler.feature_names_in_))
@@ -230,7 +234,7 @@ def main() -> None:
     )
 
     model, scaler, feature_names = load_assets()
-
+    st.write(type(model))
     uploaded_file = st.file_uploader("📂 Upload CSV NASA POWER", type=["csv"])
 
     if uploaded_file is None:
