@@ -285,7 +285,12 @@ def main() -> None:
 
         st.divider()
         st.subheader("📊 Kondisi Cuaca Terakhir")
-        last_raw = df.iloc[-1]
+        display_df = df.copy()
+
+        display_df.replace(-999, np.nan, inplace=True)
+        display_df.ffill(inplace=True)
+        display_df.bfill(inplace=True)
+        last_raw = df_fe.iloc[-1]
 
         col1, col2, col3 = st.columns(3)
         with col1:
