@@ -172,6 +172,19 @@ def predict_next_day(
     st.write("Input Order:")
     st.write(list(X.columns)[:10])
 
+    if hasattr(model, "feature_importances_"):
+    importance_df = pd.DataFrame({
+        "feature": scaler.feature_names_in_,
+        "importance": model.feature_importances_
+    })
+
+    st.dataframe(
+        importance_df.sort_values(
+            "importance",
+            ascending=False
+        ).head(20)
+    )
+
     if hasattr(scaler, "feature_names_in_"):
         st.write("Jumlah fitur scaler:", len(scaler.feature_names_in_))
 
