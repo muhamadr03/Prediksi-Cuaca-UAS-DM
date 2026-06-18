@@ -161,7 +161,29 @@ def predict_next_day(
     df_fe = feature_engineering(df)
     last = df_fe.iloc[[-1]].copy()
     X = last.reindex(columns=feature_names, fill_value=0)
-    X_scaled = scaler.transform(X)
+    # DEBUG
+    st.write("Jumlah feature_names:", len(feature_names))
+
+    if hasattr(scaler, "feature_names_in_"):
+        st.write("Jumlah fitur scaler:", len(scaler.feature_names_in_))
+
+        st.write("5 fitur pertama scaler:")
+        st.write(list(scaler.feature_names_in_)[:5])
+
+        st.write("5 fitur pertama input:")
+        st.write(list(X.columns)[:5])
+
+        missing = set(scaler.feature_names_in_) - set(X.columns)
+        extra = set(X.columns) - set(scaler.feature_names_in_)
+
+        st.write("Missing features:")
+        st.write(list(missing))
+
+        st.write("Extra features:")
+        st.write(list(extra))
+        st.write("Shape X:")
+        st.write(X.shape)
+    X_scaled = scaler.transform(X) 
 
     if hasattr(model, "predict_proba"):
         prob_rain = float(model.predict_proba(X_scaled)[0][1])
