@@ -173,10 +173,10 @@ def predict_next_day(
     st.write(list(X.columns)[:10])
 
     if hasattr(model, "feature_importances_"):
-    importance_df = pd.DataFrame({
-        "feature": scaler.feature_names_in_,
-        "importance": model.feature_importances_
-    })
+        importance_df = pd.DataFrame({
+            "feature": scaler.feature_names_in_,
+            "importance": model.feature_importances_
+        })
 
     st.dataframe(
         importance_df.sort_values(
