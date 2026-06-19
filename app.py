@@ -3,133 +3,74 @@ import pandas as pd
 import numpy as np
 import joblib
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
+# ─────────────────────────────────────────────
+# PENGATURAN AWAL
+# ─────────────────────────────────────────────
 ASSET_DIR = Path(__file__).resolve().parent
+THRESHOLD_RAIN = 0.66
 
+REQUIRED_COLUMNS = [
+    "YEAR", "DOY", "T2M", "T2M_MAX", "T2M_MIN", "RH2M", 
+    "WS10M", "WS10M_MAX", "WD10M", "CLRSKY_SFC_SW_DWN", 
+    "T2MDEW", "PRECTOTCORR", "PS"
+]
 
 @st.cache_resource
-def load_assets() -> Tuple:
+def load_assets() -> Tuple[Any, Any]:
+    """Memuat model dan scaler."""
     model = joblib.load(ASSET_DIR / "model_best.pkl")
     scaler = joblib.load(ASSET_DIR / "scaler.pkl")
-    feature_names = joblib.load(ASSET_DIR / "feature_names.pkl")
-    return model, scaler, feature_names
-
+    return model, scaler
 
 # ─────────────────────────────────────────────
-# FEATURE ENGINEERING
+# LOGIKA PEMROSESAN DATA (TIDAK ADA ST.WRITE DI SINI)
 # ─────────────────────────────────────────────
-
 def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
+    """Melakukan ekstraksi fitur dan transformasi data mentah."""
     df = df.copy()
-
     df.replace(-999, np.nan, inplace=True)
-    df.ffill(inplace=True)
-    df.bfill(inplace=True)
-    df.fillna(0, inplace=True)
+    df = df.ffill().bfill().fillna(0)
 
     if "MONTH" not in df.columns:
         year_ref = df["YEAR"].fillna(2000).astype(int)
         doy_ref = df["DOY"].fillna(1).astype(int)
         dates = pd.to_datetime(
             year_ref.astype(str) + doy_ref.astype(str).str.zfill(3),
-            format="%Y%j",
-            errors="coerce",
+            format="%Y%j", errors="coerce",
         )
         df["MONTH"] = dates.dt.month.fillna(1).astype(int)
 
-    rain = df["PRECTOTCORR"]
+    df["DAY_SIN"] = np.sin(2 * np.pi * df["DOY"] / 365.25)
+    df["DAY_COS"] = np.cos(2 * np.pi * df["DOY"] / 365.25)
+    df["MONTH_SIN"] = np.sin(2 * np.pi * df["MONTH"] / 12)
+    df["MONTH_COS"] = np.cos(2 * np.pi * df["MONTH"] / 12)
 
+    rain = df["PRECTOTCORR"]
     df["RAIN_BINARY"] = (rain > 1.0).astype(int)
-    df["RAIN_LAG1"] = rain.shift(1)
-    df["RAIN_LAG3"] = rain.shift(3)
-    df["RAIN_LAG7"] = rain.shift(7)
-    df["RAIN_BINARY_LAG1"] = df["RAIN_BINARY"].shift(1)
-    df["RAIN_BINARY_LAG3"] = df["RAIN_BINARY"].shift(3)
-    df["RAIN_BINARY_LAG7"] = df["RAIN_BINARY"].shift(7)
-    df["RAIN_ROLL3"] = rain.shift(1).rolling(3, min_periods=1).mean()
-    df["RAIN_ROLL7"] = rain.shift(1).rolling(7, min_periods=1).mean()
-    df["RAIN_ROLL14"] = rain.shift(1).rolling(14, min_periods=1).mean()
+    
+    for lag in [1, 3, 7]:
+        df[f"RAIN_LAG{lag}"] = rain.shift(lag)
+        df[f"RAIN_BINARY_LAG{lag}"] = df["RAIN_BINARY"].shift(lag)
+        
+    for window in [3, 7, 14]:
+        df[f"RAIN_ROLL{window}"] = rain.shift(1).rolling(window, min_periods=1).mean()
+        
     df["RAIN_STD7"] = rain.shift(1).rolling(7, min_periods=1).std().fillna(0)
     df["RAIN_STD14"] = rain.shift(1).rolling(14, min_periods=1).std().fillna(0)
     df["RAIN_EXPANDING_MEAN"] = rain.shift(1).expanding(min_periods=1).mean()
+    df["RAIN_EXPANDING_STD"] = rain.shift(1).expanding(min_periods=2).std().fillna(0)
 
-    df["TEMP_CHANGE"] = df["T2M"].diff()
-    df["TEMP_RANGE"] = df["T2M_MAX"] - df["T2M_MIN"]
-    df["TEMP_ROLL7"] = df["T2M"].shift(1).rolling(7, min_periods=1).mean()
-    df["TEMP_ROLL14"] = df["T2M"].shift(1).rolling(14, min_periods=1).mean()
-    df["TEMP_VOL7"] = df["T2M"].shift(1).rolling(7, min_periods=1).std().fillna(0)
-    df["TEMP_VOL14"] = df["T2M"].shift(1).rolling(14, min_periods=1).std().fillna(0)
-
-    df["RH2M_LAG1"] = df["RH2M"].shift(1)
-    df["RH2M_ROLL7"] = df["RH2M"].shift(1).rolling(7, min_periods=1).mean()
-    df["RH2M_ROLL14"] = df["RH2M"].shift(1).rolling(14, min_periods=1).mean()
-    df["RH2M_ANOM7"] = df["RH2M"] - df["RH2M_ROLL7"]
-    df["RH2M_ANOM14"] = df["RH2M"] - df["RH2M_ROLL14"]
-    df["RH2M_LAG3"] = df["RH2M"].shift(3)
-    df["RH2M_LAG7"] = df["RH2M"].shift(7)
-    df["RH2M_STD7"] = df["RH2M"].shift(1).rolling(7, min_periods=1).std().fillna(0)
-
-    df["PRESS_CHANGE"] = df["PS"].diff()
-    df["PRESS_ROLL7"] = df["PS"].shift(1).rolling(7, min_periods=1).mean()
-    df["PRESS_ROLL14"] = df["PS"].shift(1).rolling(14, min_periods=1).mean()
-    df["PRESS_VOL7"] = df["PS"].shift(1).rolling(7, min_periods=1).std().fillna(0)
-    df["PRESS_VOL14"] = df["PS"].shift(1).rolling(14, min_periods=1).std().fillna(0)
-    df["PRESS_DIFF_3"] = df["PS"] - df["PS"].shift(3)
-    df["PRESS_ANOM"] = df["PS"] - df["PS"].shift(1).rolling(14, min_periods=1).mean()
-
-    df["WIND_CHANGE"] = df["WS10M"].diff()
-    df["WIND_ROLL7"] = df["WS10M"].shift(1).rolling(7, min_periods=1).mean()
-    df["WIND_ROLL14"] = df["WS10M"].shift(1).rolling(14, min_periods=1).mean()
-    df["WS10M_LAG1"] = df["WS10M"].shift(1)
-    df["WS10M_LAG3"] = df["WS10M"].shift(3)
-    df["WIND_ROLL3"] = df["WS10M"].shift(1).rolling(3, min_periods=1).mean()
-
-    df["T2M_DIFF_DEW"] = df["T2M"] - df["T2MDEW"]
-    df["DEW_HUM"] = df["T2MDEW"] * df["RH2M"] / 100.0
-    df["DEW_CHANGE"] = df["T2MDEW"].diff().shift(1)
-
-    df["WIND_RH"] = df["WS10M"] * df["RH2M"]
-    df["TEMP_HUM"] = df["T2M"] * df["RH2M"]
-    df["HEAT_INDEX"] = (
-        -8.78469475556
-        + 1.61139411 * df["T2M"]
-        + 2.33854883889 * df["RH2M"]
-        - 0.14611605 * df["T2M"] * df["RH2M"]
-        - 0.012308094 * df["T2M"] ** 2
-        - 0.0164248277778 * df["RH2M"] ** 2
-        + 0.002211732 * df["T2M"] ** 2 * df["RH2M"]
-        + 0.00072546 * df["T2M"] * df["RH2M"] ** 2
-        - 0.000003582 * df["T2M"] ** 2 * df["RH2M"] ** 2
-    )
-
-    doy = df["DOY"]
-    month = df["MONTH"]
-    df["DAY_SIN"] = np.sin(2 * np.pi * doy / 365.25)
-    df["DAY_COS"] = np.cos(2 * np.pi * doy / 365.25)
-    df["MONTH_SIN"] = np.sin(2 * np.pi * month / 12)
-    df["MONTH_COS"] = np.cos(2 * np.pi * month / 12)
-
-    rain_bin = df["RAIN_BINARY"]
-    df["RAIN_EXPANDING_STD"] = (
-        df["PRECTOTCORR"].shift(1).expanding(min_periods=2).std().fillna(0)
-    )
-
-    rain_streak = []
-    dry_streak = []
-    rain_gap = []
-    r_s = d_s = r_g = 0
+    rain_streak, dry_streak, rain_gap = [], [], []
+    r_s = d_s = 0
     last_rain = -1
 
-    for i, rb in enumerate(rain_bin):
+    for i, rb in enumerate(df["RAIN_BINARY"]):
         if rb == 1:
-            r_s += 1
-            d_s = 0
-            last_rain = i
-            r_g = 0
+            r_s += 1; d_s = 0; last_rain = i
         else:
-            d_s += 1
-            r_s = 0
+            d_s += 1; r_s = 0
             r_g = i - last_rain if last_rain >= 0 else i + 1
 
         rain_streak.append(r_s)
@@ -140,193 +81,139 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df["DRY_STREAK"] = dry_streak
     df["RAIN_GAP"] = rain_gap
 
+    df["TEMP_CHANGE"] = df["T2M"].diff()
+    df["TEMP_RANGE"] = df["T2M_MAX"] - df["T2M_MIN"]
+    for window in [7, 14]:
+        df[f"TEMP_ROLL{window}"] = df["T2M"].shift(1).rolling(window, min_periods=1).mean()
+        df[f"TEMP_VOL{window}"] = df["T2M"].shift(1).rolling(window, min_periods=1).std().fillna(0)
+
+    for lag in [1, 3, 7]:
+        df[f"RH2M_LAG{lag}"] = df["RH2M"].shift(lag)
+    for window in [7, 14]:
+        df[f"RH2M_ROLL{window}"] = df["RH2M"].shift(1).rolling(window, min_periods=1).mean()
+        df[f"RH2M_ANOM{window}"] = df["RH2M"] - df[f"RH2M_ROLL{window}"]
+    df["RH2M_STD7"] = df["RH2M"].shift(1).rolling(7, min_periods=1).std().fillna(0)
+
+    df["PRESS_CHANGE"] = df["PS"].diff()
+    df["PRESS_DIFF_3"] = df["PS"] - df["PS"].shift(3)
+    df["PRESS_ANOM"] = df["PS"] - df["PS"].shift(1).rolling(14, min_periods=1).mean()
+    for window in [7, 14]:
+        df[f"PRESS_ROLL{window}"] = df["PS"].shift(1).rolling(window, min_periods=1).mean()
+        df[f"PRESS_VOL{window}"] = df["PS"].shift(1).rolling(window, min_periods=1).std().fillna(0)
+
+    df["WIND_CHANGE"] = df["WS10M"].diff()
+    for lag in [1, 3]:
+        df[f"WS10M_LAG{lag}"] = df["WS10M"].shift(lag)
+    for window in [3, 7, 14]:
+        df[f"WIND_ROLL{window}"] = df["WS10M"].shift(1).rolling(window, min_periods=1).mean()
+
+    df["T2M_DIFF_DEW"] = df["T2M"] - df["T2MDEW"]
+    df["DEW_HUM"] = df["T2MDEW"] * df["RH2M"] / 100.0
+    df["DEW_CHANGE"] = df["T2MDEW"].diff().shift(1)
+    df["WIND_RH"] = df["WS10M"] * df["RH2M"]
+    df["TEMP_HUM"] = df["T2M"] * df["RH2M"]
+    
+    df["HEAT_INDEX"] = (
+        -8.78469475556 + 1.61139411 * df["T2M"] + 2.33854883889 * df["RH2M"]
+        - 0.14611605 * df["T2M"] * df["RH2M"] - 0.012308094 * df["T2M"] ** 2
+        - 0.0164248277778 * df["RH2M"] ** 2 + 0.002211732 * df["T2M"] ** 2 * df["RH2M"]
+        + 0.00072546 * df["T2M"] * df["RH2M"] ** 2 - 0.000003582 * df["T2M"] ** 2 * df["RH2M"] ** 2
+    )
+
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.ffill(inplace=True)
-    df.bfill(inplace=True)
-    df.fillna(0, inplace=True)
+    return df.ffill().bfill().fillna(0)
 
-    return df
-
-
-def validate_columns(df: pd.DataFrame, required_cols: List[str]) -> List[str]:
-    return [c for c in required_cols if c not in df.columns]
-
-
-def predict_next_day(
-    df: pd.DataFrame,
-    model,
-    scaler,
-    feature_names: List[str],
-) -> Tuple[float, pd.DataFrame]:
+def predict_next_day(df: pd.DataFrame, model: Any, scaler: Any) -> float:
+    """Melakukan prediksi probabilitas hujan tanpa mencetak log apapun."""
     df_fe = feature_engineering(df)
-    last = df_fe.iloc[[-1]].copy()
-    X = last.reindex(
-    columns=scaler.feature_names_in_,
-    fill_value=0
-    )   
-    # DEBUG
-    st.write("Jumlah feature_names:", len(feature_names))
-    st.write("Scaler Order:")
-    st.write(list(scaler.feature_names_in_)[:10])
-
-    st.write("Input Order:")
-    st.write(list(X.columns)[:10])
-
-    if hasattr(model, "feature_importances_"):
-        importance_df = pd.DataFrame({
-            "feature": scaler.feature_names_in_,
-            "importance": model.feature_importances_
-        })
-
-        st.subheader("Top 20 Feature Importance")
-
-        st.dataframe(
-            importance_df.sort_values(
-                by="importance",
-                ascending=False
-            ).head(20)
-        )
-    else:
-        st.write("Model tidak memiliki feature_importances_")
-
-    if hasattr(scaler, "feature_names_in_"):
-        st.write("Jumlah fitur scaler:", len(scaler.feature_names_in_))
-
-        st.write("5 fitur pertama scaler:")
-        st.write(list(scaler.feature_names_in_)[:5])
-
-        st.write("5 fitur pertama input:")
-        st.write(list(X.columns)[:5])
-
-        missing = set(scaler.feature_names_in_) - set(X.columns)
-        extra = set(X.columns) - set(scaler.feature_names_in_)
-
-        st.write("Missing features:")
-        st.write(list(missing))
-
-        st.write("Extra features:")
-        st.write(list(extra))
-        st.write("Shape X:")
-        st.write(X.shape)
+    last_row = df_fe.iloc[[-1]].copy()
+    X = last_row.reindex(columns=scaler.feature_names_in_, fill_value=0)
     X_scaled = scaler.transform(X) 
-
+    
     if hasattr(model, "predict_proba"):
-        prob_rain = float(model.predict_proba(X_scaled)[0][1])
-    else:
-        prediction = model.predict(X_scaled)[0]
-        prob_rain = 1.0 if prediction == 1 else 0.0
+        return float(model.predict_proba(X_scaled)[0][1])
+    
+    return 1.0 if model.predict(X_scaled)[0] == 1 else 0.0
 
-    return prob_rain, df_fe
-
-
+# ─────────────────────────────────────────────
+# ANTARMUKA PENGGUNA (UI) YANG BERSIH
+# ─────────────────────────────────────────────
 def main() -> None:
-    st.set_page_config(
-        page_title="Prediksi Hujan Besok",
-        page_icon="🌧️",
-        layout="wide",
-    )
+    st.set_page_config(page_title="Prediksi Cuaca", page_icon="🌤️", layout="centered")
 
-    st.title("🌧️ Prediksi Hujan Besok")
-    st.markdown("### Sistem Smart City menggunakan data NASA POWER dan Machine Learning")
+    # Header
+    st.markdown("<h1 style='text-align: center;'>🌤️ Prediksi Hujan Smart City</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Sistem Prediksi Cuaca Berbasis Machine Learning & Data NASA POWER</p>", unsafe_allow_html=True)
+    st.write("---")
 
-    st.info(
-        "Upload file CSV NASA POWER yang memiliki kolom: YEAR, DOY, T2M, T2M_MAX, T2M_MIN, RH2M, WS10M, WS10M_MAX, WD10M, CLRSKY_SFC_SW_DWN, T2MDEW, PRECTOTCORR, PS"
-    )
-
-    model, scaler, feature_names = load_assets()
-    st.write(type(model))
-    uploaded_file = st.file_uploader("📂 Upload CSV NASA POWER", type=["csv"])
-
-    if uploaded_file is None:
-        st.warning("Silakan unggah file CSV NASA POWER terlebih dahulu.")
-        return
-
+    # Load Assets
     try:
-        df = pd.read_csv(uploaded_file)
-    except Exception as error:
-        st.error(f"Gagal membaca file CSV: {error}")
+        model, scaler = load_assets()
+    except Exception as e:
+        st.error("⚠️ Sistem sedang dalam pemeliharaan (Gagal memuat model).")
         return
 
-    st.success("✅ File berhasil diupload")
-    st.write("Preview Data:")
-    st.dataframe(df.head())
+    # File Upload Widget
+    uploaded_file = st.file_uploader("📂 Unggah File Data Cuaca (.csv)", type=["csv"])
 
-    required_columns = [
-        "YEAR",
-        "DOY",
-        "T2M",
-        "T2M_MAX",
-        "T2M_MIN",
-        "RH2M",
-        "WS10M",
-        "WS10M_MAX",
-        "WD10M",
-        "CLRSKY_SFC_SW_DWN",
-        "T2MDEW",
-        "PRECTOTCORR",
-        "PS",
-    ]
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            st.success("✅ File berhasil diunggah!")
+        except Exception:
+            st.error("⚠️ Gagal membaca file CSV. Pastikan format sudah benar.")
+            return
 
-    missing_columns = validate_columns(df, required_columns)
+        # Validasi Kolom
+        missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_cols:
+            st.warning(f"⚠️ Data tidak lengkap. Kolom yang hilang: {', '.join(missing_cols)}")
+            return
 
-    if missing_columns:
-        st.error(f"Kolom berikut tidak ditemukan: {', '.join(missing_columns)}")
-        return
+        if len(df) < 14:
+            st.warning("⚠️ Membutuhkan minimal 14 hari data untuk melakukan prediksi yang akurat.")
+            return
 
-    if len(df) < 14:
-        st.error("Dataset minimal harus memiliki 14 baris data.")
-        return
+        # Sembunyikan tabel data di dalam expander agar layar tetap bersih
+        with st.expander("Lihat sekilas data yang diunggah"):
+            st.dataframe(df.tail(5))
 
-    if st.button("🔍 Prediksi Sekarang"):
-        with st.spinner("Melakukan feature engineering dan prediksi..."):
-            try:
-                prob_rain, df_fe = predict_next_day(df, model, scaler, feature_names)
-            except Exception as error:
-                st.error(f"Terjadi error saat prediksi: {error}")
-                return
+        st.write("") # Spacing
 
-        prob_no_rain = 1.0 - prob_rain
-        THRESHOLD = 0.66
+        # Tombol Prediksi Utama
+        if st.button("🔍 Analisis & Prediksi Cuaca Besok", type="primary", use_container_width=True):
+            with st.spinner("Menganalisis pola cuaca..."):
+                prob_rain = predict_next_day(df, model, scaler)
+                prob_no_rain = 1.0 - prob_rain
 
-        if prob_rain >= THRESHOLD:
-            st.success("🌧️ Besok Diprediksi Hujan")
-        else:
-            st.info("☀️ Besok Diprediksi Tidak Hujan")
+            st.write("---")
+            
+            # --- TAMPILAN HASIL PREDIKSI ---
+            if prob_rain >= THRESHOLD_RAIN:
+                st.info("### 🌧️ Kesimpulan: Besok Diprediksi **HUJAN**")
+            else:
+                st.warning("### ☀️ Kesimpulan: Besok Diprediksi **CERAH** / TIDAK HUJAN")
 
-        st.divider()
+            # Progress bar visual untuk persentase
+            st.progress(prob_rain, text=f"Probabilitas Turun Hujan: {prob_rain*100:.1f}%")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("☔ Probabilitas Hujan", f"{prob_rain*100:.1f}%")
-        with col2:
-            st.metric("☀️ Probabilitas Tidak Hujan", f"{prob_no_rain*100:.1f}%")
-            st.caption(f"Threshold optimal model LightGBM: {THRESHOLD:.2f}")
-
-        st.divider()
-        st.subheader("📊 Kondisi Cuaca Terakhir")
-        display_df = df.copy()
-
-        display_df.replace(-999, np.nan, inplace=True)
-        display_df.ffill(inplace=True)
-        display_df.bfill(inplace=True)
-
-        last_raw = display_df.iloc[-1]
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("🌡️ Suhu", f"{last_raw['T2M']:.1f} °C")
-            st.metric("💧 Kelembaban", f"{last_raw['RH2M']:.1f}%")
-        with col2:
-            st.metric("🌬️ Angin", f"{last_raw['WS10M']:.2f} m/s")
-            st.metric("🌂 Curah Hujan", f"{last_raw['PRECTOTCORR']:.1f} mm")
-        with col3:
-            st.metric("🌫️ Titik Embun", f"{last_raw['T2MDEW']:.1f} °C")
-            st.metric("⏲️ Tekanan", f"{last_raw['PS']:.2f} kPa")
-
-        st.divider()
-        st.write("**Fitur input terakhir setelah feature engineering:**")
-        st.dataframe(df_fe.iloc[[-1]].T)
-
+            # --- TAMPILAN KONDISI CUACA HARI INI ---
+            st.write("---")
+            st.markdown("#### 📊 Kondisi Cuaca Hari Ini (Berdasarkan data terakhir)")
+            
+            last_raw = df.copy().replace(-999, np.nan).ffill().bfill().iloc[-1]
+            
+            # Menggunakan metrik bergaya dashboard
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(label="🌡️ Suhu Udara", value=f"{last_raw['T2M']:.1f} °C")
+                st.metric(label="💧 Kelembaban", value=f"{last_raw['RH2M']:.0f}%")
+            with col2:
+                st.metric(label="🌬️ Kecepatan Angin", value=f"{last_raw['WS10M']:.1f} m/s")
+                st.metric(label="🌂 Curah Hujan", value=f"{last_raw['PRECTOTCORR']:.1f} mm")
+            with col3:
+                st.metric(label="🌫️ Titik Embun", value=f"{last_raw['T2MDEW']:.1f} °C")
+                st.metric(label="⏲️ Tekanan Udara", value=f"{last_raw['PS']:.1f} kPa")
 
 if __name__ == "__main__":
     main()
