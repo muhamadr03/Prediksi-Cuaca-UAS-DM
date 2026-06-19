@@ -62,15 +62,20 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df["RAIN_EXPANDING_MEAN"] = rain.shift(1).expanding(min_periods=1).mean()
     df["RAIN_EXPANDING_STD"] = rain.shift(1).expanding(min_periods=2).std().fillna(0)
 
+    # 4. Kalkulasi Streak Hujan & Kering
     rain_streak, dry_streak, rain_gap = [], [], []
-    r_s = d_s = 0
+    r_s = d_s = r_g = 0  # <-- PERBAIKAN: r_g dideklarasikan di awal
     last_rain = -1
 
     for i, rb in enumerate(df["RAIN_BINARY"]):
         if rb == 1:
-            r_s += 1; d_s = 0; last_rain = i
+            r_s += 1
+            d_s = 0
+            r_g = 0      # <-- PERBAIKAN: r_g di-reset jadi 0 saat hujan
+            last_rain = i
         else:
-            d_s += 1; r_s = 0
+            d_s += 1
+            r_s = 0
             r_g = i - last_rain if last_rain >= 0 else i + 1
 
         rain_streak.append(r_s)
@@ -80,6 +85,7 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df["RAIN_STREAK"] = rain_streak
     df["DRY_STREAK"] = dry_streak
     df["RAIN_GAP"] = rain_gap
+
 
     df["TEMP_CHANGE"] = df["T2M"].diff()
     df["TEMP_RANGE"] = df["T2M_MAX"] - df["T2M_MIN"]
